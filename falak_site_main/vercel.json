@@ -1,7 +1,8 @@
 {
   "redirects": [
     {
-      "source": "https://falak.mitblr.in/(.*)",
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "falak.mitblr.in" }],
       "destination": "https://falak.mitblr.org/$1",
       "permanent": true
     }
