@@ -12,18 +12,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Invalid phone" }, { status: 400 });
     }
 
-    // --- HARD PRESENTATION SHORT-CIRCUIT ---
-    if (phone === '6397177067' && otp === '123456') {
-      const phoneVerificationToken = await signPhoneVerifiedToken("+91" + phone);
-      return NextResponse.json({ ok: true, phoneVerificationToken, bypass: true });
-    }
-    // ---------------------------------------
-
-    // Presentation shortcut
+    // Presentation shortcut (no hard-coded defaults). Only active when PRESENTATION_MODE=true
     if (process.env.PRESENTATION_MODE === 'true') {
-      const presetPhone = process.env.PRESENTATION_TEST_PHONE || '6397177067';
-      const presetOtp = process.env.PRESENTATION_TEST_OTP || '123456';
-      if (phone === presetPhone && otp === presetOtp) {
+      const presetPhone = process.env.PRESENTATION_TEST_PHONE;
+      const presetOtp = process.env.PRESENTATION_TEST_OTP;
+      if (presetPhone && presetOtp && phone === presetPhone && otp === presetOtp) {
         const phoneVerificationToken = await signPhoneVerifiedToken("+91" + phone);
         return NextResponse.json({ ok: true, phoneVerificationToken, presentation: true });
       }

@@ -11,15 +11,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Invalid phone" }, { status: 400 });
     }
 
-    // --- HARD PRESENTATION SHORT-CIRCUIT (temporarily bypass MSG91) ---
-    if (phone === '6397177067') {
-      return NextResponse.json({ ok: true, presentation: true, bypass: true });
-    }
-    // -----------------------------------------------------------------
-
-    // Presentation shortcut: skip external API for predefined phone
-    if (process.env.PRESENTATION_MODE === 'true' && phone === (process.env.PRESENTATION_TEST_PHONE || '6397177067')) {
-      return NextResponse.json({ ok: true, presentation: true });
+    // Presentation shortcut (no hard-coded defaults). Only active when PRESENTATION_MODE=true
+    if (process.env.PRESENTATION_MODE === 'true') {
+      const presetPhone = process.env.PRESENTATION_TEST_PHONE;
+      if (presetPhone && phone === presetPhone) {
+        return NextResponse.json({ ok: true, presentation: true });
+      }
     }
 
   const forceDev = process.env.FORCE_DEV_OTP === 'true';
