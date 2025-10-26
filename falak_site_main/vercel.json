@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    {
+      "source": "https://falak.mitblr.in/(.*)",
+      "destination": "https://falak.mitblr.org/$1",
+      "permanent": true
+    }
+  ]
+}
