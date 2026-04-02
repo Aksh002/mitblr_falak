@@ -1,4 +1,5 @@
 import dynamic from "next/dynamic";
+import Script from "next/script";
 import { Suspense } from "react";
 import Footer from "@/components/Footer";
 import { Orbitron } from "next/font/google";
@@ -19,6 +20,30 @@ const orbitron = Orbitron({
 export default function Home() {
   return (
     <div className={orbitron.className}>
+      {/* Structured data for SEO */}
+      <Script id="ld-org" type="application/ld+json" strategy="afterInteractive"
+        dangerouslySetInnerHTML={{__html: JSON.stringify({
+          "@context":"https://schema.org",
+          "@type":"Organization",
+          "name":"FALAK 2025",
+          "url": (process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXTAUTH_URL || "http://localhost:3000"),
+          "logo":"/images/logo.png"
+        })}} />
+      <Script id="ld-event" type="application/ld+json" strategy="afterInteractive"
+        dangerouslySetInnerHTML={{__html: JSON.stringify({
+          "@context":"https://schema.org",
+          "@type":"Festival",
+          "name":"FALAK 2025",
+          "startDate":"2025-10-06",
+          "endDate":"2025-10-12",
+          "eventAttendanceMode":"https://schema.org/OfflineEventAttendanceMode",
+          "location": {
+            "@type":"Place",
+            "name":"MIT Bengaluru",
+            "address":"MIT World Peace University, Bengaluru, India"
+          },
+          "organizer": {"@type":"Organization","name":"MIT BLR"}
+        })}} />
   {/* Preload critical media via metadata in layout if needed */}
 
       {/* Background Layers with smooth fade-in */}

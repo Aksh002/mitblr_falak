@@ -1,422 +1,486 @@
-<div align="center">
+# MITBLR_FALAK_APP
 
-# FALAK’25 — MIT BLR Cultural Fest Web App
+Technical README for the FALAK web application in this repository. This document is based on the current codebase state under `falak_site_main/`, not on a product pitch, so it focuses on architecture, modules, routes, environment requirements, and operational behavior.
 
-High-performance, full‑stack event platform for registrations, passes, team management, QR ticket verification, and admin ops — built on Next.js App Router + Supabase.
+## What This Repository Contains
 
-<br />
+This repository is primarily a single Next.js application:
 
-<b>At a glance</b>
-
-- 51K visitors in a month
-- 7K registered users
-- 5.5K passes sold
-- 2K+ team registrations
-- Survived a coordinated DDoS attempt during peak traffic
-
-</div>
-
----
-
-## Contents
-
-- What’s inside
-- Features and dashboards
-- Architecture and services
-- Data model (ER diagram)
-- Verification and auth flows (diagrams)
-- API surface (summary)
-- Screens and pages (with placeholders for screenshots)
-- Local development setup
-- Operational scripts and maintenance
-- Troubleshooting
-- Contributing
-
----
-
-## What’s inside
-
-- Next.js 15 App Router, React 19, TypeScript, Tailwind CSS 4
-- Supabase (Postgres, Auth) as the primary backend
-- NextAuth.js (Google OAuth) for user authentication
-- OTP verification with MSG91 (with dev-mode fallback)
-- Ticketing and QR scanning with secure short‑lived session tokens
-- GSAP/Framer animations and modern UI components
-
-Key folders:
-- `src/app/*` — App Router pages and API routes
-- `src/components/*` — UI components, admin panels, animations
-- `src/lib/*` — data access, auth, security, OTP, validation, utilities
-- `public/*` — static assets (images, fonts, media)
-- `scripts/*` — one‑off maintenance and operational utilities
-
----
-
-## Features and dashboards
-
-User-facing
-- Landing experience with animated hero and themed visuals
-- Onboarding with MAHE/Non‑MAHE/faculty flows and reg_no validation
-- Passes catalog with purchase flow and cart/checkout
-- Events directory with categories and detail pages
-- Team registration: captain email override and legacy ID fallbacks
-- Profile: owned passes, QR code, registered events, teams (robust legacy matching)
-
-Ticketing and verification
-- Deterministic per‑user QR tokens (revocable) for scanning
-- Secure scanner session tokens (HS256, strict aud/iss, short TTL)
-- Proshow ticket cutting (idempotent), admin phone stamping, timestamps
-- Standup Show captain-only cutting with dedicated endpoint
-
-Admin and operations
-- Admin dashboard (“Manage”) for tickets, users, and passes
-- Aggregation endpoints to list holders and accessible events
-- Maintenance scripts (e.g., Non‑MAHE proshow alignment)
-- Payment logs sync, diagnostics, and mock tools
-
----
-
-## Architecture and services
-
-- Frontend: Next.js App Router (server actions + RSC), Tailwind CSS, GSAP
-- Auth: NextAuth.js with Google OAuth
-- Backend: Supabase Postgres + Row Level Security (via service role for server actions)
-- OTP: MSG91 (dev-mode HS256 token fallback)
-- QR Scanning: HS256 signed session tokens for scanner app; Supabase data fetch on demand
-
-Mermaid system overview
-
-```mermaid
-flowchart LR
-	subgraph Client
-		Browser[Web App]
-		Scanner[Scanner App]
-	end
-
-	Browser -->|NextAuth Google| NextJS[Next.js App Router]
-	Browser -->|API Calls| NextJS
-	Scanner -->|QR Token + Session JWT| NextJS
-
-	NextJS -->|Service Role| Supabase[(Supabase Postgres)]
-	NextJS --> MSG91[MSG91 OTP]
-	NextJS --> Google[Google OAuth]
-
-	Supabase --> Storage[(Storage/CDN)]
+```text
+mitblr_falak_app/
+|- README.md
+|- LICENSE
+|- falak_site_main/
+|  |- package.json
+|  |- next.config.ts
+|  |- public/
+|  |- scripts/
+|  |- src/
+|  |  |- app/
+|  |  |- components/
+|  |  |- lib/
+|  |  |- middleware.ts
+|  |- supabase/
+|     |- migrations/
 ```
 
----
+The actual product code lives inside `falak_site_main/`.
 
-## Data model (ER diagram)
+## Product Summary
 
-Note: Diagram inferred from implementation. We can refine if you provide the exact schema.
+The app is the web platform for MIT Bengaluru's FALAK fest. It combines:
 
-```mermaid
-erDiagram
-	Users ||--o{ User_passes : owns
-	Users ||--o{ Team_members : participates
-	Users ||--o{ Teams : captains
+- public marketing pages and event discovery
+- Google-based sign-in and onboarding
+- MAHE, Non-MAHE, and faculty user flows
+- pass discovery and purchase handoff to an external payment portal
+- payment reconciliation and pass issuance
+- profile pages with deterministic QR codes
+- team registration and team/member lookup
+- support ticket submission
+- admin dashboards for event management, ticket support, and ops workflows
+- QR scanner integration for on-ground ticket verification
 
-	Pass ||--o{ User_passes : is_assigned
-	Events ||--o{ Pass : includes
-	Events ||--o{ Teams : has
+## Tech Stack
 
-	Teams ||--o{ Team_members : includes
+- Next.js `15.4.x` with App Router
+- React `19`
+- TypeScript `5.9`
+- Tailwind CSS `4`
+- NextAuth `4` with Google OAuth
+- Supabase SSR + `@supabase/supabase-js`
+- Zod for validation
+- `jose`-based JWT signing/verification
+- GSAP + Framer Motion for animation-heavy UI
+- Radix/shadcn-style UI primitives
+- `xlsx` for admin Excel export
+- Vercel Analytics
 
-	Users ||--o{ payment_logs : generates
-	Users ||--o{ standup_cut : marked
+Notable packages present in the repo:
 
-	Users {
-		uuid id PK
-		text email
-		text phone
-		text reg_no
-		bool mahe
-		text name
-	}
-	Pass {
-		uuid id PK
-		text pass_name
-		bool mahe
-		uuid event_id FK nullable  // null => proshow bundle
-	}
-	User_passes {
-		uuid id PK
-		uuid userId FK
-		uuid passId FK
-		bool ticket_cut
-		text ticket_cut_by
-		timestamptz ticket_cut_at
-	}
-	Events {
-		uuid id PK
-		text name
-		bool enable
-	}
-	Teams {
-		uuid id PK
-		uuid eventId FK
-		uuid captainId FK
-		text name
-	}
-	Team_members {
-		uuid id PK
-		uuid teamId FK
-		text memberId // may be legacy email/phone/uuid
-	}
-	payment_logs {
-		uuid id PK
-		uuid user_id FK
-		jsonb raw
-		text status
-	}
-	standup_cut {
-		uuid id PK
-		uuid userId FK UNIQUE
-		bool cut
-		text cut_by
-	}
-```
+- `firebase`: public config exists, but the primary auth/session path is NextAuth + Supabase-backed user data
+- `twilio`: dependency exists and there is a Twilio helper, but the main active OTP flow is implemented around MSG91/dev tokens
 
----
+## Architecture
 
-## Verification and auth flows
+### 1. Frontend
 
-### 1) User login (Google) and onboarding
+- App Router pages live in `falak_site_main/src/app/`
+- shared UI and page-specific visual systems live in `falak_site_main/src/components/`
+- the app mixes Server Components, client components, and server actions
+- the root layout injects nav, transition UI, toast notifications, payment return sync, and analytics
 
-```mermaid
-sequenceDiagram
-	participant U as User
-	participant G as Google OAuth
-	participant A as NextAuth (Next.js)
-	participant DB as Supabase
+### 2. Authentication
 
-	U->>A: Sign in with Google
-	A->>G: OAuth code exchange
-	G-->>A: id_token & profile
-	A->>DB: getUserByEmail(email)
-	alt user exists
-		A-->>U: session (JWT) + needsOnboarding=false
-	else new user
-		A-->>U: session (JWT) + needsOnboarding=true
-		U->>A: submit onboarding (reg_no, phone, etc.)
-		A->>DB: upsert Users
-		A-->>U: refreshed session
-	end
-```
+- user sign-in is handled by NextAuth Google OAuth
+- session strategy is JWT-based
+- the JWT is enriched with:
+  - `needsOnboarding`
+  - Supabase user id
+  - MAHE flag
+- middleware redirects logged-in but non-onboarded users into `/onboarding`
+- `/admin_manage` is protected and additionally role-gated in server code
 
-### 2) OTP verification (MSG91 or dev mode)
+### 3. Data Layer
 
-```mermaid
-sequenceDiagram
-	participant U as User
-	participant API as /api/otp/*
-	participant M as MSG91
+- Supabase is the primary backend
+- most privileged reads/writes use a service-role Supabase client from `src/lib/supabase/server.ts`
+- table access is wrapped in `src/lib/actions/` and `src/lib/actions/tables/`
+- the project contains some legacy table naming inconsistencies like `Users` vs `users` and `Pass` vs `passes`
 
-	U->>API: send-direct { phone }
-	alt dev mode or missing keys
-		API-->>U: { devToken } (HS256)
-	else production
-		API->>M: send OTP
-		M-->>API: accepted
-		API-->>U: ok
-	end
+### 4. Payments
 
-	U->>API: verify-direct { phone, otp, devToken? }
-	alt dev token path
-		API->>API: verify devToken + otp
-	else MSG91 path
-		API->>M: verify OTP
-	end
-	API-->>U: phoneVerificationToken (HS256)
-```
+- checkout hands users off to the external portal at `https://payment.manipal.edu/falak-Login`
+- on return, the layout-mounted `PaymentReturnSync` client component calls `/api/payments/sync`
+- server-side payment ingestion:
+  - fetches external payment logs using `ACCESSKEY` / `ACCESSTOKEN`
+  - stores auditable payment log rows
+  - maps external payment metadata to internal passes using `external_pass_map`
+  - grants `User_passes` records idempotently
+  - backfills old unmapped logs when mappings are later added
 
-### 3) QR scanning and ticket cutting
+### 5. QR / Scanner Flow
 
-```mermaid
-sequenceDiagram
-	participant S as Scanner App
-	participant API as /api/qr/ticket
-	participant DB as Supabase
+- user QR values are deterministic, derived from `userId`
+- scanner admins first obtain a short-lived session token through `/api/qr/ticket/verify_admin`
+- scanner APIs then use that signed session token for:
+  - looking up a user's passes
+  - marking tickets as cut
+  - special standup-ticket handling
 
-	S->>API: Authorization: Bearer <qr_session>
-	API->>API: verify HS256 (aud=GOOGLE_CLIENT_ID, iss=falak-qr, t=qr_session)
-	S->>API: GET ?userId=...
-	API->>DB: Users + User_passes (event_id null -> Proshow)
-	API-->>S: passes + cut status
+## Codebase Index
 
-	S->>API: POST ?userId=...&passId=...
-	API->>DB: update ticket_cut=true, ticket_cut_by=admin_phone
-	API-->>S: ok (idempotent)
-```
+### `falak_site_main/src/app/`
 
----
+Main route tree and API handlers.
 
-## API surface (summary)
+- `page.tsx`: landing page
+- `sports/*`: sports cluster listing and detail pages
+- `cultural/*`: cultural cluster listing and detail pages
+- `passes/page.tsx`: pass catalog
+- `cart/page.tsx`: client-side cart
+- `checkout/page.tsx`: payment handoff UI
+- `profile/page.tsx`: owned passes, QR display, registered events, team membership
+- `onboarding/*`: registration/onboarding flow
+- `tickets/*`: support ticket page and server action
+- `admin_manage/page.tsx`: role-gated admin entry page
+- `api/*`: route handlers for auth, OTP, teams, users, payments, QR, ops, cart compatibility, and admin utilities
+- `events/*`: legacy route tree retained for redirect/backward compatibility
+- `depriciated_pages/*`: older page variants kept in-repo
 
-Auth and OTP
-- `POST /api/otp/send-direct` — send OTP (MSG91 or dev token)
-- `POST /api/otp/verify-direct` — verify OTP, returns phoneVerificationToken
-- `GET/POST /api/auth/[...nextauth]` — NextAuth.js Google provider
+### `falak_site_main/src/components/`
 
-Ticketing and scanner
-- `GET /api/qr/ticket?userId=...` — user + passes + cut info
-- `POST /api/qr/ticket?userId=...&passId?=...` — mark cut; auto-pick proshow pass if passId missing
-- `POST /api/qr/ticket/standup_ticket?userId=...` — captain-only standup cut
+UI building blocks and dashboard clients.
 
-Users and teams
-- `GET /api/users/byEmail?email=...` — lookup user by email
-- `GET /api/users/byId?userId=...` — lookup user by id
-- `POST /api/teams/create*` — team creation (variants incl. email-as-captain)
-- `POST /api/teams/updateWithEmails` — update team by emails
+- landing/marketing components like `Hero`, `About`, `Artist`, `Timeline`, `Sponsor`
+- nav and transition components
+- onboarding and OTP components
+- cart, checkout, and payment sync components
+- profile/QR visual components
+- admin panels:
+  - `EventAdminPanel`
+  - `TicketAdminPanel`
+  - `OpsAdminPanel`
+  - `SuperAdminDashboard`
 
-Operations and payments
-- `POST /api/payments/sync`, `GET /api/dev/payments/*` — payments utilities
-- `GET /api/admin/payment-logs/nonmahe` — admin aggregation for Non‑MAHE
-- `GET /api/ops/event/[eventId]` and `*activate/*deactivate/*holders` — event ops
+### `falak_site_main/src/lib/`
 
-Middleware and gating
-- Event gating via `Events.enable` enforced across actions
-- Legacy endpoints like `/api/verify_otp` are deprecated
+Core business logic and integrations.
 
----
+- `auth.ts`: NextAuth config and JWT/session enrichment
+- `security.ts`: deterministic QR signing helpers
+- `otp.ts`: phone verification token signing
+- `supabase/*`: Supabase client factories
+- `actions/*`: server-side data access and admin/payment workflows
+- `validation/*`: zod validation
+- `firebase/*`, `twilio/*`: auxiliary integration helpers
 
-## Screens and pages
+### `falak_site_main/scripts/`
 
-Public
-- `/` — Landing (animated hero)
-- `/passes` — Passes catalog
-- `/events` + nested category pages — Events discovery
-- `/cart`, `/checkout` — Purchase flow
+Operational and one-off maintenance scripts.
 
-Authenticated
-- `/onboarding` — Registration flow (MAHE/Non‑MAHE/Faculty)
-- `/profile` — Passes, QR, teams, and events
-- `/tickets` — Ticket actions
-- `/admin_manage` — Admin dashboards
+- `fix-non-mahe-proshow.mjs`
+- `fix-non-mahe-proshow.js`
+- `migrate-proshow-to-nonmahe.ts`
 
-Screenshots (placeholders — replace with actual captures):
+## Route Inventory
 
-| Page | Preview |
-|------|---------|
-| Landing | ![Landing](falak_site_main/public/images/artist.png) |
-| Passes | ![Passes](falak_site_main/public/images/art.png) |
-| Events | ![Events](falak_site_main/public/images/des.png) |
-| Profile | ![Profile](falak_site_main/public/images/frame.png) |
-| Admin | ![Admin](falak_site_main/public/images/artisthead.jpeg) |
+### Public Pages
 
-> Tip: Add real screenshots under `falak_site_main/public/screens/` and update the links above.
+- `/`
+- `/sports`
+- `/sports/[category]`
+- `/sports/[category]/[slug]`
+- `/cultural`
+- `/cultural/[category]`
+- `/cultural/[category]/[slug]`
+- `/passes`
+- `/cart`
+- `/checkout`
+- `/tickets`
 
----
+### Authenticated / Protected Pages
 
-## Local development setup
+- `/onboarding`
+- `/profile`
+- `/admin_manage`
 
-Prerequisites
-- Node.js 18+ (recommended LTS)
-- A Supabase project (or use limited dev mode)
+### Legacy Pages
 
-Environment variables (create `falak_site_main/.env.local`):
+- `/events`
+- `/events/[category]`
+- `/events/[category]/[slug]`
 
-```
+`next.config.ts` currently redirects `/events` and `/events/*` permanently to `/sports` equivalents.
+
+## API Surface
+
+### Auth and OTP
+
+- `GET|POST /api/auth/[...nextauth]`
+- `POST /api/otp/send-direct`
+- `POST /api/otp/verify-direct`
+- `POST /api/otp/verify-widget`
+- `GET|POST /api/verify_otp`
+
+### Payments
+
+- `POST /api/payments/sync`
+- `POST /api/dev/payments/cache`
+- `GET /api/dev/payments/diagnose`
+- `GET /api/dev/payments/run`
+- `GET /api/dev/payments/logs`
+- `POST|GET|DELETE /api/dev/payments/mock`
+- `POST /api/dev/payments/seed-mapping`
+
+### QR and Ticket Verification
+
+- `GET /api/qr/verify`
+- `GET /api/qr/verify-full`
+- `POST /api/qr/ticket/verify_admin`
+- `GET /api/qr/ticket`
+- `POST /api/qr/ticket`
+- `POST /api/qr/ticket/standup_ticket`
+
+### Users, Teams, and Self-Service
+
+- `GET /api/users/byEmail`
+- `GET /api/users/byId`
+- `GET /api/me/owned`
+- `GET /api/me/accessible-events`
+- `GET /api/events/byIds`
+- `POST /api/teams/create`
+- `POST /api/teams/createWithEmails`
+- `POST /api/teams/createWithEmailsAsCaptain`
+- `POST /api/teams/updateWithEmails`
+
+### Operations / Admin
+
+- `GET /api/ops/events`
+- `GET /api/ops/event/[eventId]`
+- `GET /api/ops/event/[eventId]/holders`
+- `POST /api/ops/event/[eventId]/activate`
+- `POST /api/ops/event/[eventId]/deactivate`
+- `POST /api/ops/user/[userId]/regno`
+- `GET /api/admin/payment-logs/nonmahe`
+
+### Cart APIs
+
+Active:
+
+- `GET /api/cart/guest_passes`
+
+Deprecated compatibility stubs returning `410 Gone`:
+
+- `POST /api/cart/add`
+- `GET /api/cart/count`
+- `POST /api/cart/merge`
+- `GET /api/cart/validate_ownership`
+
+## Main User Flows
+
+### Sign-in and Onboarding
+
+1. User signs in with Google through NextAuth.
+2. `auth.ts` checks if a corresponding user exists in Supabase.
+3. If not, session gets `needsOnboarding = true`.
+4. Middleware redirects the user to `/onboarding`.
+5. Server actions create or update `Users` / `faculty_user` rows.
+
+### Pass Purchase and Reconciliation
+
+1. User browses passes on `/passes`.
+2. Non-MAHE users use a localStorage-backed cart.
+3. Checkout opens the external payment portal.
+4. A localStorage flag marks payment as in progress.
+5. On return, `/api/payments/sync` ingests external payment logs and grants internal passes.
+6. Profile shows newly owned passes and the user-level QR code.
+
+### Ticket Scanning
+
+1. Scanner admin authenticates against `ticket_admin_list`.
+2. `/api/qr/ticket/verify_admin` returns a short-lived session JWT.
+3. Scanner app submits that JWT to `/api/qr/ticket`.
+4. API returns user data and owned passes.
+5. Ticket cut writes are idempotent and store who cut the ticket and when.
+
+## Admin Roles
+
+The app currently distinguishes these admin roles:
+
+- `event_admin`
+  - create, update, delete events and passes
+  - toggle disabled event visibility
+  - optionally work with Cloudinary-hosted event images
+- `ticket_admin`
+  - search users
+  - inspect pass ownership and team info
+  - manually sync payments for a user
+  - resolve pending payment mappings
+  - handle unresolved support tickets
+  - update phone, reg no, and MAHE status
+  - assign duplicate payment logs
+- `ops_admin`
+  - view event rosters and pass holders
+  - export participants/teams to Excel
+  - activate/deactivate events
+- `super_admin`
+  - view totals and charts
+  - review approval requests
+  - run maintenance actions like the Non-MAHE proshow fix
+
+## Inferred Primary Data Model
+
+These tables are referenced directly in code. The exact SQL schema is only partially checked into the repo, so treat this as an implementation-oriented index rather than an authoritative ERD.
+
+- `Users` / `users`
+  - core person records
+  - email, phone, MAHE flag, reg no, institute, last ingestion timestamp
+- `faculty_user`
+  - faculty-specific onboarding records
+- `Pass` / `passes`
+  - pass metadata, pricing, enabled/status flags, event linkage
+- `User_passes`
+  - pass ownership, QR token, payment provenance, ticket-cut metadata
+- `Events`
+  - event metadata, enable flags, dates, venue, cluster/sub-cluster, team sizes
+- `Teams`
+  - team identity and captain mapping
+- `Team_members`
+  - team membership records, including legacy non-UUID identifiers
+- `payment_logs`
+  - raw external payment rows and normalized status data
+- `external_pass_map`
+  - whitelist mapping from upstream payment metadata to internal pass ids
+- `ticket_admin_list`
+  - scanner/ticket admin login identities
+- `admin_roles`
+  - web admin role mapping
+- `support_tickets`
+  - user-raised support tickets
+- `standup_cut`
+  - standup-show specific ticket cut status
+- `edit_logs`
+  - admin edit logging support
+
+## Environment Variables
+
+Create `falak_site_main/.env.local` for local development.
+
+### Core App / Auth
+
+```env
 NEXTAUTH_URL=http://localhost:3000
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-
-SUPABASE_URL=your-supabase-url
-SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-
-# OTP (production)
-MSG91_AUTH_KEY=your-msg91-authkey
-MSG91_OTP_TEMPLATE_ID=your-template-id
-
-# OTP (dev fallback)
-OTP_JWT_SECRET=dev-secret-for-hs256
-
-# Scanner session tokens
-# Routes currently verify HS256 using GOOGLE_CLIENT_SECRET and aud=GOOGLE_CLIENT_ID
-# Optional override for audience:
-ADMIN_QR_GOOGLE_CLIENT_ID=your-google-client-id
-
-# Optional
-QR_SIGNING_SECRET=integrity-hash-secret
-PRESENTATION_MODE=false
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 ```
 
-Install and run
+### Supabase
 
-```pwsh
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+### OTP / Onboarding
+
+```env
+MSG91_AUTH_KEY=
+MSG91_OTP_TEMPLATE_ID=
+NEXT_PUBLIC_MSG91_WIDGET_ID=
+NEXT_PUBLIC_MSG91_TOKEN_AUTH=
+OTP_JWT_SECRET=
+FORCE_DEV_OTP=false
+PRESENTATION_MODE=false
+PRESENTATION_TEST_PHONE=
+PRESENTATION_TEST_OTP=
+```
+
+### Payments
+
+```env
+ACCESSKEY=
+ACCESSTOKEN=
+VERIFICATION_URL=https://api.manipal.edu/api/v1/falak-single-payment-log
+NON_MAHE_PROSHOW_PASS_ID=
+ESPORTS_BUNDLE_PASS_ID=
+```
+
+### QR / Scanner
+
+```env
+QR_SIGNING_SECRET=
+ADMIN_QR_GOOGLE_CLIENT_ID=
+```
+
+### Optional Frontend / Media Integrations
+
+```env
+NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=
+NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET=
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=
+```
+
+Notes:
+
+- in non-production, `src/env-fallback.ts` defaults `NEXTAUTH_URL` to `http://localhost:3000`
+- most admin and payment actions require `SUPABASE_SERVICE_ROLE_KEY`
+- payment sync will not work without the payment API credentials
+
+## Local Development
+
+```powershell
 cd falak_site_main
 npm install
 npm run dev
-# open http://localhost:3000
 ```
 
----
+Available scripts:
 
-## Operational scripts and maintenance
+- `npm run dev`
+- `npm run build`
+- `npm run start`
+- `npm run lint`
+- `npm run fix:non-mahe-proshow`
 
-Non‑MAHE Proshow alignment
+The app expects a working Supabase project for most real flows. Without it, some views can render, but onboarding, admin actions, profile data, payment sync, and ticket flows will be incomplete.
 
-```
-npm run fix:non-mahe-proshow
-```
+## Operational Scripts
 
-Options:
-- `DRY_RUN=1` — log-only (no writes)
-- `TARGET_PASS_NAME="Non-MAHE BLR"` — disambiguate pass name
+### Non-MAHE Proshow Fix
 
-What it does
-- Scans `payment_logs` for successful Non‑MAHE payments
-- Loads `User_passes` proshow rows (where `event_id IS NULL`)
-- Ensures Non‑MAHE users hold the correct proshow pass; updates or deletes duplicates
-
----
-
-## Troubleshooting
-
-Fetch failed in maintenance script
-- Ensure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set (the script requires service role)
-- On Windows PowerShell, export for the current process and run:
-
-```pwsh
-$env:SUPABASE_URL="https://YOUR-PROJECT.supabase.co"
-$env:SUPABASE_SERVICE_ROLE_KEY="eyJ..."
+```powershell
 cd falak_site_main
 npm run fix:non-mahe-proshow
 ```
 
-Missing Authorization in scanner APIs
-- The scanner must include `Authorization: Bearer <qr_session>` where the token is HS256‑signed and includes `aud=GOOGLE_CLIENT_ID`, `iss=falak-qr`, and `t=qr_session`.
+Supported environment overrides used by the script:
 
-OTP dev mode
-- If MSG91 keys are unset and `NODE_ENV !== production`, the API generates a `devToken` and logs a dev OTP; use it with `/api/otp/verify-direct`.
+- `DRY_RUN=1`
+- `TARGET_PASS_NAME=Non-MAHE BLR`
+- `ONLY_USER_IDS=...`
+- `PAGE_SIZE=1000`
+- `BATCH_SIZE=200`
 
----
+Related files:
+
+- `scripts/fix-non-mahe-proshow.mjs`
+- `scripts/migrate-proshow-to-nonmahe.ts`
+- `supabase/migrations/2025-09-25_add_unique_index_external_key_v2.sql`
+
+## Important Implementation Notes
+
+- `/events` is no longer the primary route namespace; it redirects to `/sports`
+- the cart is now client-side localStorage based, not DB-cart based
+- `PaymentReturnSync` is mounted globally in the layout, so payment reconciliation logic can run immediately after a user returns to the site
+- profile QR rendering uses the same deterministic user QR under every owned pass
+- the scanner flow depends on `ticket_admin_list` and short-lived session JWTs
+- table naming in the codebase is mixed-case and legacy-aware
+
+## Current Caveats
+
+- the README that was previously in this repo contained inferred diagrams and placeholder screenshot links; those have been removed in favor of code-verified documentation
+- `send-direct` OTP handling currently supports presentation/dev-token behavior, and the non-dev branch is intentionally simplified, so production OTP behavior should be verified before relying on it as-is
+- legacy folders and deprecated endpoints are still present for compatibility
+- there is no automated test script configured in `package.json`; the main built-in quality check is `npm run lint`
 
 ## Contributing
 
-We welcome improvements! Quick guide:
+1. Work inside `falak_site_main/`.
+2. Keep route docs aligned with actual App Router paths.
+3. If you add or remove APIs, update this README's route inventory.
+4. If you introduce new env requirements, document them here immediately.
+5. Prefer extending `src/lib/actions/` wrappers instead of scattering direct table access.
 
-1) Environment
-- Duplicate `.env.local` from the example above and fill required keys
+## License
 
-2) Install & run
-- `npm i && npm run dev`
-
-3) Code style
-- TypeScript strictness; Tailwind utility-first
-- Lint with `npm run lint`
-
-4) Tests and checks
-- Prefer adding minimal tests for critical logic (validation, actions)
-
-5) Pull requests
-- Include context of the change, screenshots for UI, and any migration notes
-
----
-
-## Acknowledgements
-
-- MIT BLR community and contributors
-- Supabase, Next.js, NextAuth, MSG91, GSAP, Tailwind ecosystems
-
+This repository is licensed under the MIT license. See `LICENSE`.
